@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
-import kotlin.math.max
 
 class MainActivity : Activity() {
 
@@ -58,12 +57,9 @@ class GameView(context: android.content.Context) : SurfaceView(context), Surface
     private var screenW = 0
     private var screenH = 0
 
-    private var playerY = 0f
-    private var velocityY = 0f
-    private var onGround = true
+    private val physics = GamePhysics(gravity = 1800f, jumpPower = -750f)
+    private val scoreBoard = ScoreBoard()
 
-    private val gravity = 1800f
-    private val jumpPower = -750f
     private val groundH = 160f
     private val playerSize = 80f
     private val runSpeed = 420f
@@ -74,8 +70,6 @@ class GameView(context: android.content.Context) : SurfaceView(context), Surface
     private val obstacleW = 60f
     private val obstacleH = 130f
 
-    private var score = 0f
-    private var highScore = 0
     private var started = false
     private var gameOver = false
 
@@ -106,12 +100,10 @@ class GameView(context: android.content.Context) : SurfaceView(context), Surface
     }
 
     private fun reset() {
-        playerY = (screenH - groundH - playerSize).toFloat()
-        velocityY = 0f
-        onGround = true
+        physics.placeOnGround((screenH - groundH - playerSize).toFloat())
+        scoreBoard.reset()
         obstacles.clear()
         obstacleTimer = 0f
-        score = 0f
         gameOver = false
         started = false
     }
@@ -133,17 +125,8 @@ class GameView(context: android.content.Context) : SurfaceView(context), Surface
         if (gameOver) return
         if (!started) return
 
-        score += dt * 10
-
-        if (!onGround) {
-            velocityY += gravity * dt
-            playerY += velocityY * dt
-            if (playerY >= screenH - groundH - playerSize) {
-                playerY = screenH - groundH - playerSize
-                velocityY = 0f
-                onGround = true
-            }
-        }
+        scoreBoard.add(dt, 10f)
+        physics.update(dt)
 
         obstacleTimer -= dt
         if (obstacleTimer <= 0f) {
@@ -152,7 +135,7 @@ class GameView(context: android.content.Context) : SurfaceView(context), Surface
         }
 
         val playerLeft = screenW * 0.25f
-        val playerTop = playerY
+        val playerTop = physics.y
         val playerRect = RectF(playerLeft, playerTop, playerLeft + playerSize, playerTop + playerSize)
 
         val iter = obstacles.iterator()
@@ -166,7 +149,7 @@ class GameView(context: android.content.Context) : SurfaceView(context), Surface
             }
             if (RectF.intersects(playerRect, o)) {
                 gameOver = true
-                highScore = max(highScore, score.toInt())
+                scoreBoard.endRun()
             }
         }
     }
@@ -186,19 +169,19 @@ class GameView(context: android.content.Context) : SurfaceView(context), Surface
             }
 
             // player
-            canvas.drawRect(screenW * 0.25f, playerY, screenW * 0.25f + playerSize, playerY + playerSize, playerPaint)
+            canvas.drawRect(screenW * 0.25f, physics.y, screenW * 0.25f + playerSize, physics.y + playerSize, playerPaint)
 
             // HUD
             if (started && !gameOver) {
-                canvas.drawText("Score: ${score.toInt()}", 30f, 80f, textPaint)
+                canvas.drawText("Score: ${scoreBoard.currentScore()}", 30f, 80f, textPaint)
             }
 
             if (!started) {
                 canvas.drawText("TAP TO START", screenW / 2f, screenH / 2f - 40f, bigTextPaint)
-                canvas.drawText("Best: $highScore", screenW / 2f, screenH / 2f + 30f, textPaint)
+                canvas.drawText("Best: ${scoreBoard.highScore}", screenW / 2f, screenH / 2f + 30f, textPaint)
             } else if (gameOver) {
                 canvas.drawText("GAME OVER", screenW / 2f, screenH / 2f - 60f, bigTextPaint)
-                canvas.drawText("Score: ${score.toInt()}   Best: $highScore", screenW / 2f, screenH / 2f + 10f, textPaint)
+                canvas.drawText("Score: ${scoreBoard.currentScore()}   Best: ${scoreBoard.highScore}", screenW / 2f, screenH / 2f + 10f, textPaint)
                 canvas.drawText("TAP TO RESTART", screenW / 2f, screenH / 2f + 80f, textPaint)
             }
         } finally {
@@ -223,10 +206,7 @@ class GameView(context: android.content.Context) : SurfaceView(context), Surface
     }
 
     private fun jump() {
-        if (onGround) {
-            velocityY = jumpPower
-            onGround = false
-        }
+        physics.jump()
     }
 
     fun resume() {

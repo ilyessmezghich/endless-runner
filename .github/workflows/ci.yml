@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build, quality & unit tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4.0.4
+        with:
+          packages: "platform-tools platforms;android-34 build-tools;34.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Code quality (lint) + unit tests
+        run: ./gradlew check
+
+      - name: Build APK
+        run: ./gradlew assembleDebug
+
+      - name: Export runtime dependencies
+        run: ./gradlew exportRuntimeDeps
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload runtime dependencies
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-deps
+          path: app/build/deps
+
+  security:
+    name: Secrets, SBOM & vulnerability scan
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Secrets scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download runtime dependencies
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-deps
+          path: deps
+
+      - name: Generate SBOM (syft / CycloneDX)
+        run: |
+          curl -sL -o syft.tar.gz \
+            https://github.com/anchore/syft/releases/download/v1.52.0/syft_1.52.0_linux_amd64.tar.gz
+          tar xzf syft.tar.gz
+          mkdir -p sbom
+          ./syft scan dir:deps --name endless-runner --version 1.0 -o cyclonedx-json > sbom/bom.json
+          jq 'if .components then .components = [.components[] | select(.type != "file")] else . end' \
+            sbom/bom.json > sbom/bom.clean.json && mv sbom/bom.clean.json sbom/bom.json
+
+      - name: Vulnerability scan (osv-scanner, blocking)
+        run: |
+          curl -sL -o osv-scanner \
+            https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_linux_amd64
+          chmod +x osv-scanner
+          ./osv-scanner scan source -S sbom/bom.json -f sarif \
+            --output-file sbom/osv-results.sarif
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/bom.json
+
+      - name: Upload vulnerability report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vuln-results
+          path: sbom/osv-results.sarif
+
+      - name: Upload SARIF to security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: sbom/osv-results.sarif
+
+  release:
+    name: Publish APK release
+    needs: [build, security]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: apk
+
+      - name: Download SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: release
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Endless Runner v1.0.${{ github.run_number }}
+          files: |
+            app-debug.apk
+            release/bom.json
+          make_latest: true
+          generate_release_notes: true

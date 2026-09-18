@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.cyclonedx.bom") version "3.4.1"
 }
 
 android {
@@ -33,4 +34,23 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
+    testImplementation(kotlin("test"))
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.2")
+}
+
+tasks.register("exportRuntimeDeps") {
+    dependsOn("assembleDebug")
+    doLast {
+        val targetDir = layout.buildDirectory.dir("deps").get().asFile
+        targetDir.mkdirs()
+        project.configurations.getByName("debugRuntimeClasspath").resolve().forEach { file ->
+            if (file.name.endsWith(".jar")) {
+                val dest = File(targetDir, file.name)
+                if (!dest.exists()) {
+                    file.copyTo(dest)
+                }
+            }
+        }
+    }
 }
