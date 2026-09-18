@@ -77,7 +77,7 @@ jobs:
             https://github.com/anchore/syft/releases/download/v1.52.0/syft_1.52.0_linux_amd64.tar.gz
           tar xzf syft.tar.gz
           mkdir -p sbom
-          ./syft scan dir:deps --name endless-runner --version 1.0 -o cyclonedx-json > sbom/bom.json
+          ./syft scan dir:deps -o cyclonedx-json > sbom/bom.json
           jq 'if .components then .components = [.components[] | select(.type != "file")] else . end' \
             sbom/bom.json > sbom/bom.clean.json && mv sbom/bom.clean.json sbom/bom.json
 
@@ -104,7 +104,7 @@ jobs:
 
       - name: Upload SARIF to security tab
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: sbom/osv-results.sarif
 
